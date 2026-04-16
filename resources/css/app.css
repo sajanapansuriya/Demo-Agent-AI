@@ -1,0 +1,309 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+
+@theme {
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+:root {
+    --page-bg: #f3efe5;
+    --panel-bg: rgba(255, 251, 245, 0.88);
+    --panel-border: rgba(33, 31, 25, 0.12);
+    --text-main: #171411;
+    --text-muted: #5d554c;
+    --accent-red: #d14b32;
+    --accent-blue: #0f4c81;
+    --accent-amber: #d48a22;
+    --success: #1f7a4d;
+    --danger: #b43f2f;
+    --shadow-soft: 0 18px 40px rgba(31, 24, 18, 0.08);
+}
+
+body.agent-dashboard-page {
+    min-height: 100vh;
+    margin: 0;
+    color: var(--text-main);
+    background:
+        radial-gradient(circle at top left, rgba(209, 75, 50, 0.18), transparent 28%),
+        radial-gradient(circle at top right, rgba(15, 76, 129, 0.18), transparent 24%),
+        linear-gradient(180deg, #f8f2e8 0%, var(--page-bg) 52%, #ebe2d3 100%);
+    font-family: var(--font-sans);
+}
+
+.agent-dashboard {
+    width: min(1180px, calc(100% - 2rem));
+    margin: 0 auto;
+    padding: 2rem 0 3rem;
+}
+
+.hero-panel,
+.control-panel,
+.agent-card {
+    border: 1px solid var(--panel-border);
+    background: var(--panel-bg);
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(12px);
+}
+
+.hero-panel {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+    gap: 1.5rem;
+    border-radius: 28px;
+    padding: 2rem;
+}
+
+.eyebrow,
+.agent-kicker,
+.metric-label {
+    margin: 0;
+    color: var(--text-muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.hero-panel h1,
+.agent-card h2 {
+    margin: 0;
+    font-family: 'Space Grotesk', var(--font-sans);
+    line-height: 0.95;
+}
+
+.hero-panel h1 {
+    max-width: 12ch;
+    font-size: clamp(2.4rem, 6vw, 5.4rem);
+}
+
+.hero-text {
+    max-width: 58ch;
+    margin: 1rem 0 0;
+    color: var(--text-muted);
+    font-size: 1.02rem;
+    line-height: 1.7;
+}
+
+.hero-metrics {
+    display: grid;
+    gap: 1rem;
+}
+
+.metric-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 140px;
+    padding: 1.25rem;
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(33, 31, 25, 0.08);
+}
+
+.metric-card strong {
+    font-family: 'Space Grotesk', var(--font-sans);
+    font-size: 2rem;
+}
+
+.metric-note {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+}
+
+.control-panel {
+    margin-top: 1.5rem;
+    border-radius: 28px;
+    padding: 1.5rem;
+}
+
+.input-label {
+    display: block;
+    margin-bottom: 0.75rem;
+    font-weight: 700;
+}
+
+.prompt-input {
+    width: 100%;
+    min-height: 210px;
+    padding: 1rem 1.1rem;
+    border: 1px solid rgba(33, 31, 25, 0.14);
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.82);
+    color: var(--text-main);
+    font: inherit;
+    line-height: 1.7;
+    resize: vertical;
+}
+
+.prompt-input:focus {
+    outline: 2px solid rgba(15, 76, 129, 0.25);
+    border-color: rgba(15, 76, 129, 0.4);
+}
+
+.action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+    margin-top: 1rem;
+}
+
+.action-button {
+    border: 0;
+    border-radius: 999px;
+    padding: 0.9rem 1.2rem;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    transition:
+        transform 140ms ease,
+        opacity 140ms ease,
+        box-shadow 140ms ease;
+}
+
+.action-button:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+.action-button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.action-button.primary {
+    background: var(--accent-red);
+    color: #fffaf4;
+}
+
+.action-button.secondary {
+    background: var(--accent-blue);
+    color: #f5fbff;
+}
+
+.action-button.ghost {
+    background: #fff6e8;
+    color: var(--text-main);
+    border: 1px solid rgba(33, 31, 25, 0.12);
+}
+
+.status-banner {
+    margin: 1rem 0 0;
+    padding: 0.9rem 1rem;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.68);
+    color: var(--text-muted);
+}
+
+.status-banner[data-tone='running'] {
+    color: var(--accent-blue);
+}
+
+.status-banner[data-tone='success'] {
+    color: var(--success);
+}
+
+.status-banner[data-tone='error'] {
+    color: var(--danger);
+}
+
+.results-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+}
+
+.agent-card {
+    border-radius: 28px;
+    padding: 1.5rem;
+}
+
+.agent-card[data-busy='true'] {
+    border-color: rgba(15, 76, 129, 0.4);
+}
+
+.backend-card[data-busy='true'] {
+    border-color: rgba(209, 75, 50, 0.4);
+}
+
+.github-card[data-busy='true'] {
+    border-color: rgba(212, 138, 34, 0.55);
+}
+
+.agent-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.agent-badge {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0.45rem 0.75rem;
+    background: #fff6e8;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.agent-description,
+.agent-state {
+    color: var(--text-muted);
+}
+
+.agent-output {
+    min-height: 360px;
+    margin: 0;
+    overflow: auto;
+    border-radius: 20px;
+    padding: 1rem;
+    background: #181512;
+    color: #f8f1e8;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+    font-size: 0.92rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+}
+
+@media (max-width: 900px) {
+    .hero-panel,
+    .results-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .hero-panel h1 {
+        max-width: none;
+    }
+}
+
+@media (max-width: 640px) {
+    .agent-dashboard {
+        width: min(100% - 1rem, 100%);
+        padding: 0.75rem 0 1.5rem;
+    }
+
+    .hero-panel,
+    .control-panel,
+    .agent-card {
+        border-radius: 22px;
+        padding: 1rem;
+    }
+
+    .action-row {
+        flex-direction: column;
+    }
+
+    .action-button {
+        width: 100%;
+    }
+
+    .agent-output {
+        min-height: 280px;
+    }
+}
