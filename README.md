@@ -32,6 +32,13 @@ This project now supports Gemini-powered agent roles for planning and delivery h
 
 ```json
 {
+  "role": "backend",
+  "message": "Build the Laravel backend for user authentication. Return files to create, full code for controllers, routes, migrations, services, validation, and feature tests."
+}
+```
+
+```json
+{
   "role": "github_pr",
   "message": "Backend work is complete. Prepare the branch name, commit plan, push commands, PR title, and PR description."
 }
@@ -96,6 +103,13 @@ The dashboard lets you:
 - run `github_pr`
 - run both roles side by side
 - compare output in real time on one screen
+
+The `backend` role is tuned to return:
+
+- Laravel file paths to create or update
+- implementation-ready code blocks
+- routes, controllers, services, migrations, and tests
+- backend validation and security notes
 
 For real pull request creation, the `github_pr` role now performs:
 
