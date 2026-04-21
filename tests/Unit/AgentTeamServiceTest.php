@@ -6,6 +6,7 @@ use App\Exceptions\GeminiApiException;
 use App\Services\AgentTeamService;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Process;
 use Tests\TestCase;
 
 class AgentTeamServiceTest extends TestCase
@@ -231,6 +232,170 @@ class AgentTeamServiceTest extends TestCase
             }
 
             return false;
+        });
+    }
+
+    public function test_github_pr_role_can_create_branch_push_and_open_pull_request(): void
+    {
+        config()->set('services.gemini.api_key', 'test-key');
+        config()->set('services.gemini.model', 'gemini-2.5-flash');
+        config()->set('services.gemini.fallback_models', ['gemini-2.5-flash-lite']);
+        config()->set('services.gemini.retries', 1);
+        config()->set('services.gemini.retry_sleep_ms', 0);
+        config()->set('services.github.token', 'github-token');
+        config()->set('services.github.owner', 'acme');
+        config()->set('services.github.repository', 'ai-agent');
+        config()->set('services.github.base_branch', 'main');
+        config()->set('services.github.use_gh_cli', false);
+
+        $currentBranch = 'main';
+        $hasChanges = true;
+
+        Process::preventStrayProcesses()->fake(function ($process) use (&$currentBranch, &$hasChanges) {
+            $command = $process->command;
+
+            if ($command === ['git', 'branch', '--show-current']) {
+                return Process::result($currentBranch);
+            }
+
+            if ($command === ['git', 'remote', 'get-url', 'origin']) {
+                return Process::result('https://github.com/acme/ai-agent.git');
+            }
+
+            if ($command === ['git', 'status', '--short', '--branch']) {
+                return Process::result($hasChanges ? "## {$currentBranch}\n M app/Services/AgentTeamService.php" : "## {$currentBranch}");
+            }
+
+            if ($command === ['git', 'status', '--porcelain']) {
+                return Process::result($hasChanges ? ' M app/Services/AgentTeamService.php' : '');
+            }
+
+            if ($command === ['git', 'checkout', '-b', 'feature/auth-pr']) {
+                $currentBranch = 'feature/auth-pr';
+
+                return Process::result("Switched to a new branch 'feature/auth-pr'");
+            }
+
+            if ($command === ['git', 'add', '-A']) {
+                return Process::result('');
+            }
+
+            if ($command === ['git', 'diff', '--cached', '--name-only']) {
+                return Process::result($hasChanges ? 'app/Services/AgentTeamService.php' : '');
+            }
+
+            if ($command === ['git', 'commit', '-m', 'feat: automate github pr creation']) {
+                $hasChanges = false;
+
+                return Process::result('[feature/auth-pr abc1234] feat: automate github pr creation');
+            }
+
+            if ($command === ['git', 'push', '-u', 'origin', 'feature/auth-pr']) {
+                return Process::result('branch feature/auth-pr set up to track origin/feature/auth-pr.');
+            }
+
+            return Process::result('', 'Unexpected command.', 1);
+        });
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::sequence()
+                ->push([
+                    'choices' => [[
+                        'message' => [
+                            'role' => 'assistant',
+                            'content' => null,
+                            'tool_calls' => [
+                                [
+                                    'id' => 'call_cfg',
+                                    'type' => 'function',
+                                    'function' => [
+                                        'name' => 'get_github_configuration',
+                                        'arguments' => '{}',
+                                    ],
+                                ],
+                                [
+                                    'id' => 'call_status',
+                                    'type' => 'function',
+                                    'function' => [
+                                        'name' => 'get_git_status',
+                                        'arguments' => '{}',
+                                    ],
+                                ],
+                                [
+                                    'id' => 'call_branch',
+                                    'type' => 'function',
+                                    'function' => [
+                                        'name' => 'create_git_branch',
+                                        'arguments' => json_encode([
+                                            'branch_name' => 'feature/auth-pr',
+                                        ], JSON_THROW_ON_ERROR),
+                                    ],
+                                ],
+                                [
+                                    'id' => 'call_commit',
+                                    'type' => 'function',
+                                    'function' => [
+                                        'name' => 'commit_git_changes',
+                                        'arguments' => json_encode([
+                                            'commit_message' => 'feat: automate github pr creation',
+                                        ], JSON_THROW_ON_ERROR),
+                                    ],
+                                ],
+                                [
+                                    'id' => 'call_push',
+                                    'type' => 'function',
+                                    'function' => [
+                                        'name' => 'push_git_branch',
+                                        'arguments' => json_encode([
+                                            'branch_name' => 'feature/auth-pr',
+                                        ], JSON_THROW_ON_ERROR),
+                                    ],
+                                ],
+                                [
+                                    'id' => 'call_pr',
+                                    'type' => 'function',
+                                    'function' => [
+                                        'name' => 'create_github_pull_request',
+                                        'arguments' => json_encode([
+                                            'title' => 'Automate GitHub PR creation',
+                                            'body' => "## Summary\n- add real PR creation tools",
+                                            'head_branch' => 'feature/auth-pr',
+                                            'base_branch' => 'main',
+                                            'draft' => false,
+                                        ], JSON_THROW_ON_ERROR),
+                                    ],
+                                ],
+                            ],
+                        ],
+                        'finish_reason' => 'tool_calls',
+                    ]],
+                ], 200)
+                ->push([
+                    'choices' => [[
+                        'message' => [
+                            'role' => 'assistant',
+                            'content' => 'Pull request created successfully: https://github.com/acme/ai-agent/pull/12',
+                        ],
+                        'finish_reason' => 'stop',
+                    ]],
+                ], 200),
+            'https://api.github.com/repos/acme/ai-agent/pulls' => Http::response([
+                'html_url' => 'https://github.com/acme/ai-agent/pull/12',
+                'number' => 12,
+            ], 201),
+        ]);
+
+        $output = app(AgentTeamService::class)->runAgent('github_pr', 'Create the branch, push the work, and open the pull request now.');
+
+        $this->assertSame('Pull request created successfully: https://github.com/acme/ai-agent/pull/12', $output);
+        Process::assertRan(fn ($process) => $process->command === ['git', 'checkout', '-b', 'feature/auth-pr']);
+        Process::assertRan(fn ($process) => $process->command === ['git', 'commit', '-m', 'feat: automate github pr creation']);
+        Process::assertRan(fn ($process) => $process->command === ['git', 'push', '-u', 'origin', 'feature/auth-pr']);
+        Http::assertSent(function (Request $request): bool {
+            return $request->url() === 'https://api.github.com/repos/acme/ai-agent/pulls'
+                && $request->hasHeader('Authorization', 'Bearer github-token')
+                && ($request->data()['head'] ?? null) === 'feature/auth-pr'
+                && ($request->data()['base'] ?? null) === 'main';
         });
     }
 

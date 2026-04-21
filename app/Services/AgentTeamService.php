@@ -7,8 +7,10 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Process;
 use InvalidArgumentException;
 use RuntimeException;
+use stdClass;
 use Throwable;
 
 class AgentTeamService
@@ -275,15 +277,18 @@ You focus on the final engineering handoff after code is finished: branch hygien
 
 Your responsibilities:
 - Review the described code changes and turn them into a clean Git workflow
-- Check the configured GitHub credentials and repository settings before recommending commands
-- Recommend a branch name, commit plan, and PR title
-- Draft a concise PR description with summary, testing, and rollout notes
-- Call out anything that should be verified before pushing
-- Keep the response practical, command-oriented, and ready for engineers to use
+- Check the configured GitHub credentials and repository settings before acting
+- Inspect the current git branch and worktree before creating a pull request
+- Create a branch if needed, commit changes when the user clearly asks to proceed, push the branch, and then create the pull request
+- Draft a concise PR title and PR body when the user does not provide them
+- Report the exact PR URL on success, or the exact blocker on failure
+- Keep the response practical and execution-focused
 
-Call the get_github_configuration tool before drafting push or PR steps.
-When useful, call the create_task_plan tool first to structure your work.
-Your final answer should be organized with short titled sections and include example git and GitHub commands.
+Always call get_github_configuration and get_git_status first.
+If the current branch matches the base branch, create a feature branch before pushing.
+If there are uncommitted changes and the user wants the PR created now, commit them with a concrete commit message before pushing.
+After the branch is pushed, call create_github_pull_request.
+Your final answer should summarize what happened and include the PR URL when available.
 SYSTEM,
                 'tools' => [
                     [
@@ -291,7 +296,64 @@ SYSTEM,
                         'description' => 'Return the configured GitHub authentication and repository settings from Laravel environment configuration.',
                         'input_schema' => [
                             'type' => 'object',
-                            'properties' => [],
+                            'properties' => new stdClass(),
+                        ],
+                    ],
+                    [
+                        'name' => 'get_git_status',
+                        'description' => 'Return the current git branch, origin remote, and worktree status for the repository.',
+                        'input_schema' => [
+                            'type' => 'object',
+                            'properties' => new stdClass(),
+                        ],
+                    ],
+                    [
+                        'name' => 'create_git_branch',
+                        'description' => 'Create and switch to a new git branch for the upcoming pull request.',
+                        'input_schema' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'branch_name' => ['type' => 'string'],
+                                'from_ref' => ['type' => 'string'],
+                            ],
+                            'required' => ['branch_name'],
+                        ],
+                    ],
+                    [
+                        'name' => 'commit_git_changes',
+                        'description' => 'Stage all tracked and untracked changes, then create a git commit.',
+                        'input_schema' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'commit_message' => ['type' => 'string'],
+                            ],
+                            'required' => ['commit_message'],
+                        ],
+                    ],
+                    [
+                        'name' => 'push_git_branch',
+                        'description' => 'Push the current or specified branch to the configured remote.',
+                        'input_schema' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'branch_name' => ['type' => 'string'],
+                                'remote' => ['type' => 'string'],
+                            ],
+                        ],
+                    ],
+                    [
+                        'name' => 'create_github_pull_request',
+                        'description' => 'Create a real GitHub pull request for a pushed branch using the GitHub API.',
+                        'input_schema' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'title' => ['type' => 'string'],
+                                'body' => ['type' => 'string'],
+                                'head_branch' => ['type' => 'string'],
+                                'base_branch' => ['type' => 'string'],
+                                'draft' => ['type' => 'boolean'],
+                            ],
+                            'required' => ['title', 'body'],
                         ],
                     ],
                     [
@@ -322,6 +384,11 @@ SYSTEM,
         return match ($toolName) {
             'create_task_plan' => $this->toolCreateTaskPlan($toolInput),
             'get_github_configuration' => $this->toolGetGithubConfiguration(),
+            'get_git_status' => $this->toolGetGitStatus(),
+            'create_git_branch' => $this->toolCreateGitBranch($toolInput),
+            'commit_git_changes' => $this->toolCommitGitChanges($toolInput),
+            'push_git_branch' => $this->toolPushGitBranch($toolInput),
+            'create_github_pull_request' => $this->toolCreateGithubPullRequest($toolInput),
             default => "Unknown tool [{$toolName}] called by {$agentRole}.",
         };
     }
@@ -356,11 +423,7 @@ SYSTEM,
 
     protected function toolGetGithubConfiguration(): string
     {
-        $token = (string) config('services.github.token', '');
-        $owner = (string) config('services.github.owner', '');
-        $repository = (string) config('services.github.repository', '');
-        $baseBranch = (string) config('services.github.base_branch', 'main');
-        $useGhCli = (bool) config('services.github.use_gh_cli', false);
+        ['token' => $token, 'owner' => $owner, 'repository' => $repository, 'base_branch' => $baseBranch, 'use_gh_cli' => $useGhCli] = $this->githubConfig();
 
         $missing = [];
 
@@ -384,6 +447,175 @@ SYSTEM,
             'Base Branch: '.($baseBranch !== '' ? $baseBranch : 'main'),
             'Status: '.($missing === [] ? 'Ready for GitHub automation' : 'Missing configuration'),
             'Missing Keys: '.($missing === [] ? 'None' : implode(', ', $missing)),
+        ]);
+    }
+
+    protected function toolGetGitStatus(): string
+    {
+        $branch = $this->currentGitBranch();
+        $baseBranch = (string) config('services.github.base_branch', 'main');
+        $origin = $this->runProcess(['git', 'remote', 'get-url', 'origin'], allowFailure: true);
+        $status = $this->runProcess(['git', 'status', '--short', '--branch']);
+
+        return implode(PHP_EOL, [
+            'Git Status:',
+            'Current Branch: '.$branch,
+            'Base Branch: '.$baseBranch,
+            'Origin: '.($origin !== '' ? $origin : 'Not configured'),
+            'Has Uncommitted Changes: '.($this->repositoryHasChanges() ? 'Yes' : 'No'),
+            'Status Output:',
+            $status !== '' ? $status : 'Working tree clean.',
+        ]);
+    }
+
+    protected function toolCreateGitBranch(array $input): string
+    {
+        $branchName = trim((string) ($input['branch_name'] ?? ''));
+        $fromRef = trim((string) ($input['from_ref'] ?? ''));
+
+        if ($branchName === '') {
+            throw new RuntimeException('create_git_branch requires a non-empty branch_name.');
+        }
+
+        if ($this->currentGitBranch() === $branchName) {
+            return implode(PHP_EOL, [
+                'Git Branch:',
+                'Status: Already on requested branch.',
+                'Branch: '.$branchName,
+            ]);
+        }
+
+        $command = ['git', 'checkout', '-b', $branchName];
+
+        if ($fromRef !== '') {
+            $command[] = $fromRef;
+        }
+
+        $output = $this->runProcess($command);
+
+        return implode(PHP_EOL, [
+            'Git Branch:',
+            'Status: Branch created.',
+            'Branch: '.$this->currentGitBranch(),
+            'Output: '.$output,
+        ]);
+    }
+
+    protected function toolCommitGitChanges(array $input): string
+    {
+        $commitMessage = trim((string) ($input['commit_message'] ?? ''));
+
+        if ($commitMessage === '') {
+            throw new RuntimeException('commit_git_changes requires a non-empty commit_message.');
+        }
+
+        $this->runProcess(['git', 'add', '-A']);
+
+        $stagedFiles = $this->runProcess(['git', 'diff', '--cached', '--name-only'], allowFailure: true);
+
+        if ($stagedFiles === '') {
+            return implode(PHP_EOL, [
+                'Git Commit:',
+                'Status: No changes to commit.',
+                'Commit Message: '.$commitMessage,
+            ]);
+        }
+
+        $output = $this->runProcess(['git', 'commit', '-m', $commitMessage]);
+
+        return implode(PHP_EOL, [
+            'Git Commit:',
+            'Status: Commit created.',
+            'Commit Message: '.$commitMessage,
+            'Files:',
+            $this->indentLines($stagedFiles),
+            'Output: '.$output,
+        ]);
+    }
+
+    protected function toolPushGitBranch(array $input): string
+    {
+        $branchName = trim((string) ($input['branch_name'] ?? ''));
+        $remote = trim((string) ($input['remote'] ?? 'origin'));
+        $branchName = $branchName !== '' ? $branchName : $this->currentGitBranch();
+
+        if ($branchName === '') {
+            throw new RuntimeException('Unable to determine which branch to push.');
+        }
+
+        $output = $this->runProcess(['git', 'push', '-u', $remote, $branchName]);
+
+        return implode(PHP_EOL, [
+            'Git Push:',
+            'Status: Branch pushed.',
+            'Remote: '.$remote,
+            'Branch: '.$branchName,
+            'Output: '.$output,
+        ]);
+    }
+
+    protected function toolCreateGithubPullRequest(array $input): string
+    {
+        ['token' => $token, 'owner' => $owner, 'repository' => $repository, 'base_branch' => $configuredBaseBranch] = $this->githubConfig();
+
+        $title = trim((string) ($input['title'] ?? ''));
+        $body = trim((string) ($input['body'] ?? ''));
+        $headBranch = trim((string) ($input['head_branch'] ?? ''));
+        $baseBranch = trim((string) ($input['base_branch'] ?? ''));
+        $draft = (bool) ($input['draft'] ?? false);
+
+        if ($title === '' || $body === '') {
+            throw new RuntimeException('create_github_pull_request requires non-empty title and body.');
+        }
+
+        if ($token === '') {
+            throw new RuntimeException('Missing GITHUB_TOKEN configuration. API pull request creation cannot continue.');
+        }
+
+        if ($owner === '' || $repository === '') {
+            throw new RuntimeException('Missing GITHUB_OWNER or GITHUB_REPOSITORY configuration.');
+        }
+
+        $headBranch = $headBranch !== '' ? $headBranch : $this->currentGitBranch();
+        $baseBranch = $baseBranch !== '' ? $baseBranch : $configuredBaseBranch;
+
+        if ($headBranch === '' || $baseBranch === '') {
+            throw new RuntimeException('Unable to determine head or base branch for the pull request.');
+        }
+
+        if ($headBranch === $baseBranch) {
+            throw new RuntimeException('Head branch matches base branch. Create and push a feature branch before opening a pull request.');
+        }
+
+        $response = Http::withToken($token)
+            ->acceptJson()
+            ->withHeaders([
+                'X-GitHub-Api-Version' => '2022-11-28',
+            ])
+            ->post("https://api.github.com/repos/{$owner}/{$repository}/pulls", [
+                'title' => $title,
+                'body' => $body,
+                'head' => $headBranch,
+                'base' => $baseBranch,
+                'draft' => $draft,
+            ]);
+
+        if (! $response->successful()) {
+            $message = data_get($response->json(), 'message')
+                ?? $response->body()
+                ?? 'Unknown GitHub API error.';
+
+            throw new RuntimeException('GitHub pull request creation failed: '.$message);
+        }
+
+        return implode(PHP_EOL, [
+            'GitHub Pull Request:',
+            'Status: Created.',
+            'Title: '.$title,
+            'Head: '.$headBranch,
+            'Base: '.$baseBranch,
+            'URL: '.(string) data_get($response->json(), 'html_url', ''),
+            'Number: '.(string) data_get($response->json(), 'number', ''),
         ]);
     }
 
@@ -563,16 +795,64 @@ SYSTEM,
     protected function formatTools(array $tools): array
     {
         return array_map(
-                 fn (array $tool): array => [
-                     'type' => 'function',
-                     'function' => [
-                         'name' => $tool['name'],
+            fn (array $tool): array => [
+                'type' => 'function',
+                'function' => [
+                    'name' => $tool['name'],
                     'description' => $tool['description'],
                     'parameters' => $tool['input_schema'],
                 ],
             ],
             $tools
         );
+    }
+
+    protected function githubConfig(): array
+    {
+        return [
+            'token' => (string) config('services.github.token', ''),
+            'owner' => (string) config('services.github.owner', ''),
+            'repository' => (string) config('services.github.repository', ''),
+            'base_branch' => (string) config('services.github.base_branch', 'main'),
+            'use_gh_cli' => (bool) config('services.github.use_gh_cli', false),
+        ];
+    }
+
+    protected function currentGitBranch(): string
+    {
+        return $this->runProcess(['git', 'branch', '--show-current']);
+    }
+
+    protected function repositoryHasChanges(): bool
+    {
+        return $this->runProcess(['git', 'status', '--porcelain'], allowFailure: true) !== '';
+    }
+
+    protected function runProcess(array $command, bool $allowFailure = false): string
+    {
+        $result = Process::path(base_path())
+            ->timeout(120)
+            ->run($command);
+
+        $output = trim($result->output() !== '' ? $result->output() : $result->errorOutput());
+
+        if (! $allowFailure && $result->failed()) {
+            throw new RuntimeException(sprintf(
+                'Command failed [%s]: %s',
+                implode(' ', $command),
+                $output !== '' ? $output : 'Unknown process error.'
+            ));
+        }
+
+        return $output;
+    }
+
+    protected function indentLines(string $value): string
+    {
+        return implode(PHP_EOL, array_map(
+            static fn (string $line): string => '  '.$line,
+            preg_split('/\r\n|\r|\n/', trim($value)) ?: []
+        ));
     }
 
     protected function ensureConfigured(): void

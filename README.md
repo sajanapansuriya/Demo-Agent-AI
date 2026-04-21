@@ -37,6 +37,13 @@ This project now supports Gemini-powered agent roles for planning and delivery h
 }
 ```
 
+```json
+{
+  "role": "github_pr",
+  "message": "Backend work is complete. Create a feature branch if needed, commit the current changes, push them to origin, and open the GitHub pull request now."
+}
+```
+
 Aliases:
 
 - `team_lead` -> `team_leader`
@@ -89,6 +96,20 @@ The dashboard lets you:
 - run `github_pr`
 - run both roles side by side
 - compare output in real time on one screen
+
+For real pull request creation, the `github_pr` role now performs:
+
+- git status inspection
+- branch creation
+- commit creation
+- `git push -u origin <branch>`
+- GitHub API pull request creation
+
+Real PR creation requires:
+
+- a valid git repository with an `origin` remote
+- working local git push authentication
+- `GITHUB_TOKEN`, `GITHUB_OWNER`, and `GITHUB_REPOSITORY` set in `.env`
 
 Run the default feature prompt:
 
